@@ -177,5 +177,15 @@
         }
       }
     }
-  ]
+  ],
+  "outputs": {
+    "logicAppIdentityPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Logic/workflows', parameters('logicAppName')), '2019-08-01', 'full').identity.principalId]"
+    },
+    "logicAppIdentityTenantId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Logic/workflows', parameters('logicAppName')), '2019-08-01', 'full').identity.tenantId]"
+    }
+  }
 }
