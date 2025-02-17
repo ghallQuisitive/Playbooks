@@ -7,40 +7,30 @@
       "metadata": {
         "description": "Name of the Logic App"
       }
-    },
-    "location": {
-      "type": "string",
-      "defaultValue": "[resourceGroup().location]",
-      "metadata": {
-        "description": "Location for the Logic App"
-      }
-    },
+    }
+  },
+  "variables": {
+    "location": "[resourceGroup().location]",
     "connections": {
-      "type": "object",
-      "defaultValue": {
-        "azuresentinel-1": {
-          "connectionId": "[resourceId('Microsoft.Web/connections', 'azuresentinel-1')]",
-          "connectionName": "azuresentinel-1",
-          "connectionProperties": {
-            "authentication": {
-              "type": "ManagedServiceIdentity"
-            }
-          },
-          "id": "[subscriptionResourceId('Microsoft.Web/locations/managedApis', parameters('location'), 'azuresentinel')]"
+      "azuresentinel-1": {
+        "connectionId": "[resourceId('Microsoft.Web/connections', 'azuresentinel-1')]",
+        "connectionName": "azuresentinel-1",
+        "connectionProperties": {
+          "authentication": {
+            "type": "ManagedServiceIdentity"
+          }
         },
-        "wdatp": {
-          "connectionId": "[resourceId('Microsoft.Web/connections', 'wdatp')]",
-          "connectionName": "wdatp",
-          "connectionProperties": {
-            "authentication": {
-              "type": "ManagedServiceIdentity"
-            }
-          },
-          "id": "[subscriptionResourceId('Microsoft.Web/locations/managedApis', parameters('location'), 'wdatp')]"
-        }
+        "id": "[subscriptionResourceId('Microsoft.Web/locations/managedApis', variables('location'), 'azuresentinel')]"
       },
-      "metadata": {
-        "description": "Object containing connection information for the Logic App connectors"
+      "wdatp": {
+        "connectionId": "[resourceId('Microsoft.Web/connections', 'wdatp')]",
+        "connectionName": "wdatp",
+        "connectionProperties": {
+          "authentication": {
+            "type": "ManagedServiceIdentity"
+          }
+        },
+        "id": "[subscriptionResourceId('Microsoft.Web/locations/managedApis', variables('location'), 'wdatp')]"
       }
     }
   },
@@ -49,7 +39,7 @@
       "type": "Microsoft.Logic/workflows",
       "apiVersion": "2016-06-01",
       "name": "[parameters('logicAppName')]",
-      "location": "[parameters('location')]",
+      "location": "[variables('location')]",
       "identity": {
         "type": "SystemAssigned"
       },
@@ -63,7 +53,7 @@
               "inputs": {
                 "host": {
                   "connection": {
-                    "name": "@parameters('$connections')['azuresentinel-1']['connectionId']"
+                    "name": "@variables('connections').azuresentinel-1.connectionId"
                   }
                 },
                 "body": {
@@ -80,7 +70,7 @@
               "inputs": {
                 "host": {
                   "connection": {
-                    "name": "@parameters('$connections')['azuresentinel-1']['connectionId']"
+                    "name": "@variables('connections').azuresentinel-1.connectionId"
                   }
                 },
                 "method": "post",
@@ -103,7 +93,7 @@
                       "inputs": {
                         "host": {
                           "connection": {
-                            "name": "@parameters('$connections')['wdatp']['connectionId']"
+                            "name": "@variables('connections').wdatp.connectionId"
                           }
                         },
                         "method": "post",
@@ -123,7 +113,7 @@
                       "inputs": {
                         "host": {
                           "connection": {
-                            "name": "@parameters('$connections')['azuresentinel-1']['connectionId']"
+                            "name": "@variables('connections').azuresentinel-1.connectionId"
                           }
                         },
                         "method": "post",
@@ -139,7 +129,7 @@
                       "inputs": {
                         "host": {
                           "connection": {
-                            "name": "@parameters('$connections')['wdatp']['connectionId']"
+                            "name": "@variables('connections').wdatp.connectionId"
                           }
                         },
                         "method": "get",
@@ -154,7 +144,7 @@
                         "inputs": {
                           "host": {
                             "connection": {
-                              "name": "@parameters('$connections')['azuresentinel-1']['connectionId']"
+                              "name": "@variables('connections').azuresentinel-1.connectionId"
                             }
                           },
                           "method": "post",
@@ -194,7 +184,7 @@
         },
         "parameters": {
           "$connections": {
-            "value": "[parameters('connections')]"
+            "value": "[variables('connections')]"
           }
         }
       }
