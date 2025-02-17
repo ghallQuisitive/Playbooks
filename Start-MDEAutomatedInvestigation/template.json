@@ -1,0 +1,181 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "logicAppName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the Logic App"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Location for the Logic App"
+      }
+    },
+    "connections": {
+      "type": "object",
+      "metadata": {
+        "description": "Object containing connection information for the Logic App connectors"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2016-06-01",
+      "name": "[parameters('logicAppName')]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "triggers": {
+            "Microsoft_Sentinel_incident": {
+              "type": "ApiConnectionWebhook",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azuresentinel-1']['connectionId']"
+                  }
+                },
+                "body": {
+                  "callback_url": "@{listCallbackUrl()}"
+                },
+                "path": "/incident-creation"
+              }
+            }
+          },
+          "actions": {
+            "Entities_-_Get_Hosts": {
+              "runAfter": {},
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azuresentinel-1']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "body": "@triggerBody()?['object']?['properties']?['relatedEntities']",
+                "path": "/entities/host"
+              }
+            },
+            "For_each": {
+              "foreach": "@body('Entities_-_Get_Hosts')?['Hosts']",
+              "actions": {
+                "Condition": {
+                  "actions": {
+                    "Actions_-_Start_automated_investigation_on_a_machine_2": {
+                      "runAfter": {
+                        "Machines_-_Get_single_machine_2": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['wdatp']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "body": {
+                          "Comment": "Start automated investigation from playbook for Azure Sentinel Incident: \n@{triggerBody()?['object']?['properties']?['incidentNumber']}"
+                        },
+                        "path": "/api/machines/@{encodeURIComponent(body('Machines_-_Get_single_machine_2')?['id'])}/startInvestigation"
+                      }
+                    },
+                    "Add_comment_to_incident_(V3)": {
+                      "runAfter": {
+                        "Actions_-_Start_automated_investigation_on_a_machine_2": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['azuresentinel-1']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "body": {
+                          "incidentArmId": "@triggerBody()?['object']?['id']",
+                          "message": "<p class=\"editor-paragraph\">Autoinvestigation state = @{body('Actions_-_Start_automated_investigation_on_a_machine_2')?['state']}</p><p class=\"editor-paragraph\">InvestigationID = @{body('Actions_-_Start_automated_investigation_on_a_machine_2')?['id']}</p><p class=\"editor-paragraph\">InvestigationURL = https://portal.azure.com/#blade/Microsoft_Azure_Security_Sentinel/SecuritySentinelIncidentViewBlade/incidentId/</p><br>"
+                        },
+                        "path": "/Incidents/Comment"
+                      }
+                    },
+                    "Machines_-_Get_single_machine_2": {
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['wdatp']['connectionId']"
+                          }
+                        },
+                        "method": "get",
+                        "path": "/api/machines/@{encodeURIComponent(items('For_each')?['additionalData']?['MdatpDeviceId'])}"
+                      }
+                    }
+                  },
+                  "else": {
+                    "actions": {
+                      "Add_comment_to_incident_(V3)_2": {
+                        "type": "ApiConnection",
+                        "inputs": {
+                          "host": {
+                            "connection": {
+                              "name": "@parameters('$connections')['azuresentinel-1']['connectionId']"
+                            }
+                          },
+                          "method": "post",
+                          "body": {
+                            "incidentArmId": "@triggerBody()?['object']?['id']",
+                            "message": "<p>Machine not found in Defender for Endpoint. Cannot start the Auto-Investigation.</p>"
+                          },
+                          "path": "/Incidents/Comment"
+                        }
+                      }
+                    }
+                  },
+                  "expression": {
+                    "and": [
+                      {
+                        "not": {
+                          "equals": [
+                            "@items('For_each')?['additionalData']?['MdatpDeviceId']",
+                            "@null"
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "type": "If"
+                }
+              },
+              "runAfter": {
+                "Entities_-_Get_Hosts": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Foreach"
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": "[parameters('connections')]"
+          }
+        }
+      }
+    }
+  ]
+}
