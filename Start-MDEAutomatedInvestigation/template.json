@@ -14,6 +14,34 @@
       "metadata": {
         "description": "Location for the Logic App"
       }
+    },
+    "connections": {
+      "type": "object",
+      "defaultValue": {
+        "azuresentinel-1": {
+          "connectionId": "[resourceId('Microsoft.Web/connections', 'azuresentinel-1')]",
+          "connectionName": "azuresentinel-1",
+          "connectionProperties": {
+            "authentication": {
+              "type": "ManagedServiceIdentity"
+            }
+          },
+          "id": "[subscriptionResourceId('Microsoft.Web/locations/managedApis', parameters('location'), 'azuresentinel')]"
+        },
+        "wdatp": {
+          "connectionId": "[resourceId('Microsoft.Web/connections', 'wdatp')]",
+          "connectionName": "wdatp",
+          "connectionProperties": {
+            "authentication": {
+              "type": "ManagedServiceIdentity"
+            }
+          },
+          "id": "[subscriptionResourceId('Microsoft.Web/locations/managedApis', parameters('location'), 'wdatp')]"
+        }
+      },
+      "metadata": {
+        "description": "Object containing connection information for the Logic App connectors"
+      }
     }
   },
   "resources": [
@@ -35,7 +63,7 @@
               "inputs": {
                 "host": {
                   "connection": {
-                    "name": "[parameters('$connections').azuresentinel-1.connectionId]"
+                    "name": "@parameters('$connections')['azuresentinel-1']['connectionId']"
                   }
                 },
                 "body": {
@@ -46,22 +74,127 @@
             }
           },
           "actions": {
-            // ... (your actions here)
+            "Entities_-_Get_Hosts": {
+              "runAfter": {},
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azuresentinel-1']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "body": "@triggerBody()?['object']?['properties']?['relatedEntities']",
+                "path": "/entities/host"
+              }
+            },
+            "For_each": {
+              "foreach": "@body('Entities_-_Get_Hosts')?['Hosts']",
+              "actions": {
+                "Condition": {
+                  "actions": {
+                    "Actions_-_Start_automated_investigation_on_a_machine_2": {
+                      "runAfter": {
+                        "Machines_-_Get_single_machine_2": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['wdatp']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "body": {
+                          "Comment": "Start automated investigation from playbook for Azure Sentinel Incident: \n@{triggerBody()?['object']?['properties']?['incidentNumber']}"
+                        },
+                        "path": "/api/machines/@{encodeURIComponent(body('Machines_-_Get_single_machine_2')?['id'])}/startInvestigation"
+                      }
+                    },
+                    "Add_comment_to_incident_(V3)": {
+                      "runAfter": {
+                        "Actions_-_Start_automated_investigation_on_a_machine_2": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['azuresentinel-1']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "body": {
+                          "incidentArmId": "@triggerBody()?['object']?['id']",
+                          "message": "<p class=\"editor-paragraph\">Autoinvestigation state = @{body('Actions_-_Start_automated_investigation_on_a_machine_2')?['state']}</p><p class=\"editor-paragraph\">InvestigationID = @{body('Actions_-_Start_automated_investigation_on_a_machine_2')?['id']}</p><p class=\"editor-paragraph\">InvestigationURL = https://portal.azure.com/#blade/Microsoft_Azure_Security_Sentinel/SecuritySentinelIncidentViewBlade/incidentId/</p><br>"
+                        },
+                        "path": "/Incidents/Comment"
+                      }
+                    },
+                    "Machines_-_Get_single_machine_2": {
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['wdatp']['connectionId']"
+                          }
+                        },
+                        "method": "get",
+                        "path": "/api/machines/@{encodeURIComponent(items('For_each')?['additionalData']?['MdatpDeviceId'])}"
+                      }
+                    }
+                  },
+                  "else": {
+                    "actions": {
+                      "Add_comment_to_incident_(V3)_2": {
+                        "type": "ApiConnection",
+                        "inputs": {
+                          "host": {
+                            "connection": {
+                              "name": "@parameters('$connections')['azuresentinel-1']['connectionId']"
+                            }
+                          },
+                          "method": "post",
+                          "body": {
+                            "incidentArmId": "@triggerBody()?['object']?['id']",
+                            "message": "<p>Machine not found in Defender for Endpoint. Cannot start the Auto-Investigation.</p>"
+                          },
+                          "path": "/Incidents/Comment"
+                        }
+                      }
+                    }
+                  },
+                  "expression": {
+                    "and": [
+                      {
+                        "not": {
+                          "equals": [
+                            "@items('For_each')?['additionalData']?['MdatpDeviceId']",
+                            "@null"
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "type": "If"
+                }
+              },
+              "runAfter": {
+                "Entities_-_Get_Hosts": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Foreach"
+            }
           },
           "outputs": {}
         },
         "parameters": {
           "$connections": {
-            "value": {
-              "azuresentinel-1": {
-                "connectionId": "[resourceId('Microsoft.Web/connections', 'azuresentinel-1')]",
-                "connectionName": "azuresentinel-1"
-              },
-              "wdatp": {
-                "connectionId": "[resourceId('Microsoft.Web/connections', 'wdatp-Start-MDEAutomatedInvestigation')]",
-                "connectionName": "wdatp-Start-MDEAutomatedInvestigation"
-              }
-            }
+            "value": "[parameters('connections')]"
           }
         }
       }
