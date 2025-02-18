@@ -1,0 +1,692 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "logicAppName": {
+      "type": "string",
+      "defaultValue": "MyLogicApp",
+      "metadata": {
+        "description": "Name of the Logic App."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Location for the Logic App."
+      }
+    },
+    "$connections": {
+      "type": "object",
+      "metadata": {
+        "description": "Connection parameters for the Logic App."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2016-06-01",
+      "name": "[parameters('logicAppName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "triggers": {
+            "Recurrence": {
+              "recurrence": {
+                "interval": 1,
+                "frequency": "Day",
+                "timeZone": "UTC-09",
+                "schedule": {
+                  "hours": [
+                    "8"
+                  ]
+                }
+              },
+              "evaluatedRecurrence": {
+                "interval": 1,
+                "frequency": "Day",
+                "timeZone": "UTC-09",
+                "schedule": {
+                  "hours": [
+                    "8"
+                  ]
+                }
+              },
+              "type": "Recurrence"
+            }
+          },
+          "actions": {
+            "HTTP": {
+              "runAfter": {},
+              "type": "Http",
+              "inputs": {
+                "uri": "https://graph.microsoft.com/v1.0/applications?$select=displayName,appId,passwordCredentials,keyCredentials",
+                "method": "GET",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "audience": "https://graph.microsoft.com"
+                }
+              }
+            },
+            "HTTP_1": {
+              "runAfter": {
+                "HTTP": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Http",
+              "inputs": {
+                "uri": "https://graph.microsoft.com/v1.0/applications",
+                "method": "GET",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "audience": "https://graph.microsoft.com"
+                }
+              },
+              "runtimeConfiguration": {
+                "contentTransfer": {
+                  "transferMode": "Chunked"
+                }
+              }
+            },
+            "Parse_JSON": {
+              "runAfter": {
+                "HTTP_1": [
+                  "Succeeded"
+                ]
+              },
+              "type": "ParseJson",
+              "inputs": {
+                "content": "@outputs('HTTP').body",
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "appId": {
+                            "type": "string"
+                          },
+                          "passwordCredentials": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "endDateTime": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "keyCredentials": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "endDateTime": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "Initialize_Expired": {
+              "runAfter": {
+                "Parse_JSON": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "itemsExpired",
+                    "type": "array",
+                    "value": []
+                  }
+                ]
+              }
+            },
+            "Initialize_30_Days": {
+              "runAfter": {
+                "Initialize_Expired": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "items30Days",
+                    "type": "array",
+                    "value": []
+                  }
+                ]
+              }
+            },
+            "Initialize_60_Days": {
+              "runAfter": {
+                "Initialize_30_Days": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "items60Days",
+                    "type": "array",
+                    "value": []
+                  }
+                ]
+              }
+            },
+            "Initialize_90_Days": {
+              "runAfter": {
+                "Initialize_60_Days": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "items90Days",
+                    "type": "array",
+                    "value": []
+                  }
+                ]
+              }
+            },
+            "For_each_App": {
+              "foreach": "@outputs('Parse_JSON').body.value",
+              "actions": {
+                "For_each_Secret": {
+                  "foreach": "@items('For_each_App').passwordCredentials",
+                  "actions": {
+                    "Check_Secret": {
+                      "actions": {
+                        "Categorize_Expiration": {
+                          "type": "Compose",
+                          "inputs": "@int(div(sub(ticks(items('For_each_Secret').endDateTime), ticks(utcNow())), 864000000000))"
+                        },
+                        "Check_Categories": {
+                          "actions": {
+                            "Add_to_Expired": {
+                              "type": "AppendToArrayVariable",
+                              "inputs": {
+                                "name": "itemsExpired",
+                                "value": {
+                                  "displayName": "@items('For_each_App').displayName",
+                                  "expirationDate": "@formatDateTime(items('For_each_Secret').endDateTime, 'yyyy-MM-dd')",
+                                  "daysUntilExpiration": "@outputs('Categorize_Expiration')"
+                                }
+                              }
+                            }
+                          },
+                          "runAfter": {
+                            "Categorize_Expiration": [
+                              "Succeeded"
+                            ]
+                          },
+                          "else": {
+                            "actions": {
+                              "Check_30": {
+                                "actions": {
+                                  "Add_to_30": {
+                                    "type": "AppendToArrayVariable",
+                                    "inputs": {
+                                      "name": "items30Days",
+                                      "value": {
+                                        "displayName": "@items('For_each_App').displayName",
+                                        "expirationDate": "@formatDateTime(items('For_each_Secret').endDateTime, 'yyyy-MM-dd')",
+                                        "daysUntilExpiration": "@outputs('Categorize_Expiration')"
+                                      }
+                                    }
+                                  }
+                                },
+                                "else": {
+                                  "actions": {}
+                                },
+                                "expression": {
+                                  "lessOrEquals": [
+                                    "@outputs('Categorize_Expiration')",
+                                    30
+                                  ]
+                                },
+                                "type": "If"
+                              },
+                              "Check_60": {
+                                "actions": {
+                                  "Add_to_60": {
+                                    "type": "AppendToArrayVariable",
+                                    "inputs": {
+                                      "name": "items60Days",
+                                      "value": {
+                                        "displayName": "@items('For_each_App').displayName",
+                                        "expirationDate": "@formatDateTime(items('For_each_Secret').endDateTime, 'yyyy-MM-dd')",
+                                        "daysUntilExpiration": "@outputs('Categorize_Expiration')"
+                                      }
+                                    }
+                                  }
+                                },
+                                "else": {
+                                  "actions": {}
+                                },
+                                "expression": {
+                                  "and": [
+                                    {
+                                      "greater": [
+                                        "@outputs('Categorize_Expiration')",
+                                        30
+                                      ]
+                                    },
+                                    {
+                                      "lessOrEquals": [
+                                        "@outputs('Categorize_Expiration')",
+                                        60
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "type": "If"
+                              },
+                              "Check_90": {
+                                "actions": {
+                                  "Add_to_90": {
+                                    "type": "AppendToArrayVariable",
+                                    "inputs": {
+                                      "name": "items90Days",
+                                      "value": {
+                                        "displayName": "@items('For_each_App').displayName",
+                                        "expirationDate": "@formatDateTime(items('For_each_Secret').endDateTime, 'yyyy-MM-dd')",
+                                        "daysUntilExpiration": "@outputs('Categorize_Expiration')"
+                                      }
+                                    }
+                                  }
+                                },
+                                "else": {
+                                  "actions": {}
+                                },
+                                "expression": {
+                                  "and": [
+                                    {
+                                      "greater": [
+                                        "@outputs('Categorize_Expiration')",
+                                        60
+                                      ]
+                                    },
+                                    {
+                                      "lessOrEquals": [
+                                        "@outputs('Categorize_Expiration')",
+                                        90
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "type": "If"
+                              }
+                            }
+                          },
+                          "expression": {
+                            "less": [
+                              "@outputs('Categorize_Expiration')",
+                              0
+                            ]
+                          },
+                          "type": "If"
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "not": {
+                          "equals": [
+                            "@items('For_each_Secret').endDateTime",
+                            null
+                          ]
+                        }
+                      },
+                      "type": "If"
+                    }
+                  },
+                  "type": "Foreach"
+                }
+              },
+              "runAfter": {
+                "Initialize_90_Days": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Foreach"
+            },
+            "Create_Tables": {
+              "actions": {
+                "Create_Expired_Table": {
+                  "type": "Table",
+                  "inputs": {
+                    "from": "@variables('itemsExpired')",
+                    "format": "HTML",
+                    "columns": [
+                      {
+                        "header": "Display Name",
+                        "value": "@item()['displayName']"
+                      },
+                      {
+                        "header": "Expiration Date",
+                        "value": "@item()['expirationDate']"
+                      },
+                      {
+                        "header": "Days Expired",
+                        "value": "@float(mul(item()['daysUntilExpiration'], -1))"
+                      }
+                    ]
+                  }
+                },
+                "Create_30_Day_Table": {
+                  "type": "Table",
+                  "inputs": {
+                    "from": "@variables('items30Days')",
+                    "format": "HTML",
+                    "columns": [
+                      {
+                        "header": "Display Name",
+                        "value": "@item()['displayName']"
+                      },
+                      {
+                        "header": "Expiration Date",
+                        "value": "@item()['expirationDate']"
+                      },
+                      {
+                        "header": "Days Until Expiration",
+                        "value": "@item()['daysUntilExpiration']"
+                      }
+                    ]
+                  }
+                },
+                "Create_60_Day_Table": {
+                  "type": "Table",
+                  "inputs": {
+                    "from": "@variables('items60Days')",
+                    "format": "HTML",
+                    "columns": [
+                      {
+                        "header": "Display Name",
+                        "value": "@item()['displayName']"
+                      },
+                      {
+                        "header": "Expiration Date",
+                        "value": "@item()['expirationDate']"
+                      },
+                      {
+                        "header": "Days Until Expiration",
+                        "value": "@item()['daysUntilExpiration']"
+                      }
+                    ]
+                  }
+                },
+                "Create_90_Day_Table": {
+                  "type": "Table",
+                  "inputs": {
+                    "from": "@variables('items90Days')",
+                    "format": "HTML",
+                    "columns": [
+                      {
+                        "header": "Display Name",
+                        "value": "@item()['displayName']"
+                      },
+                      {
+                        "header": "Expiration Date",
+                        "value": "@item()['expirationDate']"
+                      },
+                      {
+                        "header": "Days Until Expiration",
+                        "value": "@item()['daysUntilExpiration']"
+                      }
+                    ]
+                  }
+                }
+              },
+              "runAfter": {
+                "For_each_App": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Scope"
+            },
+            "Get_SignIn_Logs": {
+              "runAfter": {
+                "Create_Tables": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Http",
+              "inputs": {
+                "uri": "@concat('https://graph.microsoft.com/v1.0/auditLogs/signIns?$filter=createdDateTime gt ', formatDateTime(addDays(utcNow(), -30), 'yyyy-MM-ddTHH:mm:ssZ'))",
+                "method": "GET",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "audience": "https://graph.microsoft.com"
+                }
+              }
+            },
+            "Parse_SignIn_Logs": {
+              "runAfter": {
+                "Get_SignIn_Logs": [
+                  "Succeeded"
+                ]
+              },
+              "type": "ParseJson",
+              "inputs": {
+                "content": "@body('Get_SignIn_Logs')",
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "appId": {
+                            "type": "string"
+                          },
+                          "appDisplayName": {
+                            "type": "string"
+                          },
+                          "createdDateTime": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "Initialize_NoActivity": {
+              "runAfter": {
+                "Parse_SignIn_Logs": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "itemsNoActivity",
+                    "type": "array",
+                    "value": []
+                  }
+                ]
+              }
+            },
+            "Initialize_HasActivity": {
+              "runAfter": {
+                "Initialize_NoActivity": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "itemsHasActivity",
+                    "type": "array",
+                    "value": []
+                  }
+                ]
+              }
+            },
+            "For_each_App_Activity": {
+              "foreach": "@body('Parse_JSON')?['value']",
+              "actions": {
+                "Filter_SignIns_for_this_App": {
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@body('Parse_SignIn_Logs')?['value']",
+                    "where": "@equals(item()?['appId'], items('For_each_App_Activity')?['appId'])"
+                  }
+                },
+                "Check_SignIn_Results": {
+                  "actions": {
+                    "Add_to_NoActivity": {
+                      "type": "AppendToArrayVariable",
+                      "inputs": {
+                        "name": "itemsNoActivity",
+                        "value": {
+                          "displayName": "@items('For_each_App_Activity')?['displayName']",
+                          "appId": "@items('For_each_App_Activity')?['appId']"
+                        }
+                      }
+                    }
+                  },
+                  "runAfter": {
+                    "Filter_SignIns_for_this_App": [
+                      "Succeeded"
+                    ]
+                  },
+                  "else": {
+                    "actions": {
+                      "Add_to_HasActivity": {
+                        "type": "AppendToArrayVariable",
+                        "inputs": {
+                          "name": "itemsHasActivity",
+                          "value": {
+                            "displayName": "@items('For_each_App_Activity')?['displayName']",
+                            "appId": "@items('For_each_App_Activity')?['appId']"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "expression": "@equals(length(body('Filter_SignIns_for_this_App')), 0)",
+                  "type": "If"
+                }
+              },
+              "runAfter": {
+                "Initialize_HasActivity": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Foreach"
+            },
+            "Create_Tables_Activity": {
+              "actions": {
+                "Create_NoActivity_Table": {
+                  "type": "Table",
+                  "inputs": {
+                    "from": "@variables('itemsNoActivity')",
+                    "format": "HTML",
+                    "columns": [
+                      {
+                        "header": "Application Name",
+                        "value": "@item()['displayName']"
+                      },
+                      {
+                        "header": "App ID",
+                        "value": "@item()['appId']"
+                      }
+                    ]
+                  }
+                },
+                "Create_HasActivity_Table": {
+                  "type": "Table",
+                  "inputs": {
+                    "from": "@variables('itemsHasActivity')",
+                    "format": "HTML",
+                    "columns": [
+                      {
+                        "header": "Application Name",
+                        "value": "@item()['displayName']"
+                      },
+                      {
+                        "header": "App ID",
+                        "value": "@item()['appId']"
+                      }
+                    ]
+                  }
+                }
+              },
+              "runAfter": {
+                "For_each_App_Activity": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Scope"
+            },
+            "Send_an_email_(V2)": {
+              "runAfter": {
+                "Create_Tables_Activity": [
+                  "Succeeded"
+                ]
+              },
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['office365']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "body": {
+                  "To": "gregory.hall@quisitive.com, rick.shepard@quisitive.com",
+                  "Subject": "The Bomb Way to keep tabs on your apps!",
+                  "Body": "<p class=\"editor-paragraph\">Currently Expired App Credentials</p><p class=\"editor-paragraph\">@{body('Create_Expired_Table')}</p><br><p class=\"editor-paragraph\">30 Days Out</p><p class=\"editor-paragraph\">@{body('Create_30_Day_Table')}</p><br><p class=\"editor-paragraph\">60 Days Out</p><p class=\"editor-paragraph\">@{body('Create_60_Day_Table')}</p><br><p class=\"editor-paragraph\">90 Days Out</p><p class=\"editor-paragraph\">@{body('Create_90_Day_Table')}</p><br><p class=\"editor-paragraph\">No Sign-Ins (Last 30 Days)</p><p>@{body('Create_NoActivity_Table')}</p><br><p class=\"editor-paragraph\">Has Sign-Ins (Last 30 Days)</p><p>@{body('Create_HasActivity_Table')}</p>",
+                  "Importance": "High"
+                },
+                "path": "/v2/Mail"
+              }
+            }
+          },
+          "outputs": {},
+          "parameters": {
+            "$connections": {
+              "type": "Object",
+              "defaultValue": {}
+            }
+          }
+        },
+        "parameters": {
+          "$connections": {
+            "value": "[parameters('$connections')]"
+          }
+        }
+      }
+    }
+  ]
+}
